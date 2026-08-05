@@ -19,18 +19,18 @@ function toError(error: unknown): Error {
 	return error instanceof Error ? error : new Error('PDF processing failed with an unknown error.');
 }
 
-export class PdfPageExtract implements INodeType {
+export class FreePdfToText implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'PDF Page Extract',
-		name: 'pdfPageExtract',
+		displayName: 'Free PDF to Text',
+		name: 'freePdfToText',
 		icon: { light: 'file:pdf.svg', dark: 'file:pdf.dark.svg' },
 		group: ['transform'],
 		version: 1,
 		usableAsTool: true,
 		subtitle: '={{$parameter["operation"]}}',
-		description: 'Extract text from a PDF as a page-by-page array',
+		description: 'Convert PDF files to text locally without a paid API or external upload',
 		defaults: {
-			name: 'PDF Page Extract',
+			name: 'Free PDF to Text',
 		},
 		inputs: ['main' as NodeConnectionType],
 		outputs: ['main' as NodeConnectionType],

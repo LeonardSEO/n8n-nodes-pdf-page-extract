@@ -217,22 +217,27 @@ function toError(error: unknown): Error {
 	return error instanceof Error ? error : new Error('PDF processing failed with an unknown error.');
 }
 
+function throwPdfError(error: unknown): never {
+	throw toError(error);
+}
+
 export async function withTimeout<T>(
 	operation: Promise<T>,
 	timeoutMs: number,
-	operationName = 'PDF processing',
+	operationName = 'PDF-to-text processing',
 ): Promise<T> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeoutSignal = AbortSignal.timeout(timeoutMs);
+	const timeoutMessage = `${operationName} exceeded the ${timeoutMs / 1_000} second timeout.`;
+	let rejectTimeout: (() => void) | undefined;
 	const timeout = new Promise<never>((_resolve, reject) => {
-		timer = setTimeout(() => {
-			reject(new Error(`${operationName} exceeded the ${timeoutMs / 1_000} second timeout.`));
-		}, timeoutMs);
+		rejectTimeout = () => reject(new Error(timeoutMessage));
+		timeoutSignal.addEventListener('abort', rejectTimeout, { once: true });
 	});
 
 	try {
 		return await Promise.race([operation, timeout]);
 	} finally {
-		if (timer !== undefined) clearTimeout(timer);
+		if (rejectTimeout) timeoutSignal.removeEventListener('abort', rejectTimeout);
 	}
 }
 
@@ -262,7 +267,7 @@ async function extractWithParser(
 		try {
 			pageText = await parser.getPageText(pageNumber);
 		} catch (error) {
-			if (limits.strictParsing) throw error;
+			if (limits.strictParsing) throwPdfError(error);
 			warnings.push({ page: pageNumber, message: toError(error).message });
 		}
 		characterCount += pageText.length;
@@ -324,6 +329,7 @@ export async function extractPdf(
 
 	let result: PdfExtractionResult | undefined;
 	let extractionError: Error | undefined;
+	let cleanupError: Error | undefined;
 
 	try {
 		result = await withTimeout(
@@ -337,7 +343,10 @@ export async function extractPdf(
 	try {
 		await withTimeout(parser.destroy(), 5_000, 'PDF parser cleanup');
 	} catch (error) {
-		const cleanupError = toError(error);
+		cleanupError = toError(error);
+	}
+
+	if (cleanupError) {
 		if (extractionError) {
 			throw new Error(
 				`${extractionError.message} PDF parser cleanup also failed: ${cleanupError.message}`,

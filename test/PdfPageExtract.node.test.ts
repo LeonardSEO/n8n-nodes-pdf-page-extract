@@ -1,11 +1,11 @@
 import type { IExecuteFunctions, INodeExecutionData } from 'n8n-workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { extractPdf } from '../nodes/PdfPageExtract/pdf-extraction';
-import { PdfPageExtract } from '../nodes/PdfPageExtract/PdfPageExtract.node';
+import { extractPdf } from '../nodes/FreePdfToText/pdf-extraction';
+import { FreePdfToText } from '../nodes/FreePdfToText/FreePdfToText.node';
 
-vi.mock('../nodes/PdfPageExtract/pdf-extraction', async (importOriginal) => {
-	const original = await importOriginal<typeof import('../nodes/PdfPageExtract/pdf-extraction')>();
+vi.mock('../nodes/FreePdfToText/pdf-extraction', async (importOriginal) => {
+	const original = await importOriginal<typeof import('../nodes/FreePdfToText/pdf-extraction')>();
 	return { ...original, extractPdf: vi.fn() };
 });
 
@@ -30,8 +30,8 @@ function createContext(items: INodeExecutionData[], continueOnFail: boolean): IE
 		getInputData: vi.fn(() => items),
 		getNode: vi.fn(() => ({
 			id: 'pdf-page-extract',
-			name: 'PDF Page Extract',
-			type: 'pdfPageExtract',
+			name: 'Free PDF to Text',
+			type: 'freePdfToText',
 			typeVersion: 1,
 			position: [0, 0] as [number, number],
 			parameters: {},
@@ -72,7 +72,7 @@ describe('PdfPageExtract.execute', () => {
 			})
 			.mockRejectedValueOnce(new Error('damaged PDF'));
 
-		const result = await new PdfPageExtract().execute.call(createContext(items, true));
+		const result = await new FreePdfToText().execute.call(createContext(items, true));
 
 		expect(result[0][0]).toMatchObject({
 			json: {
@@ -96,10 +96,19 @@ describe('PdfPageExtract.execute', () => {
 		extractPdfMock.mockRejectedValueOnce(new Error('unreadable PDF'));
 
 		await expect(
-			new PdfPageExtract().execute.call(createContext([createInput('bad.pdf')], false)),
+			new FreePdfToText().execute.call(createContext([createInput('bad.pdf')], false)),
 		).rejects.toMatchObject({
 			context: { itemIndex: 0 },
 			message: expect.stringContaining('unreadable PDF'),
 		});
+	});
+});
+
+describe('FreePdfToText.description', () => {
+	it('uses a package-unique node name', () => {
+		const description = new FreePdfToText().description;
+
+		expect(description.name).toBe('freePdfToText');
+		expect(description.displayName).toBe('Free PDF to Text');
 	});
 });

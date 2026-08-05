@@ -1,4 +1,4 @@
-# Contributing to n8n-nodes-pdf-page-extract
+# Contributing to n8n-nodes-free-pdf-to-text
 
 Thank you for considering contributing to this n8n community node! Here are some guidelines to help you get started.
 
@@ -20,7 +20,7 @@ Thank you for considering contributing to this n8n community node! Here are some
    ```bash
    pnpm link
    cd /path/to/n8n
-   npm link n8n-nodes-pdf-page-extract
+   npm link n8n-nodes-free-pdf-to-text
    ```
 
 2. Or use Docker:
@@ -29,7 +29,7 @@ Thank you for considering contributing to this n8n community node! Here are some
      --name n8n \
      -p 5678:5678 \
      -v ~/.n8n:/home/node/.n8n \
-     -v /path/to/n8n-nodes-pdf-page-extract:/home/node/.n8n/custom/n8n-nodes-pdf-page-extract \
+     -v /path/to/n8n-nodes-free-pdf-to-text:/home/node/.n8n/custom/n8n-nodes-free-pdf-to-text \
      n8nio/n8n
    ```
 

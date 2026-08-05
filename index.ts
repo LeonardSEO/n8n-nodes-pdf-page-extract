@@ -1,5 +1,5 @@
-import { PdfPageExtract } from './nodes/PdfPageExtract/PdfPageExtract.node';
+import { FreePdfToText } from './nodes/FreePdfToText/FreePdfToText.node';
 
 export const nodeTypes = [
-	PdfPageExtract,
+	FreePdfToText,
 ];

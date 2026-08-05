@@ -9,7 +9,7 @@ import {
 	type PdfParser,
 	type PdfParserFactory,
 	withTimeout,
-} from '../nodes/PdfPageExtract/pdf-extraction';
+} from '../nodes/FreePdfToText/pdf-extraction';
 
 function createPdfFromStreams(streams: string[]): Buffer {
 	const objects: string[] = [];
