@@ -26,6 +26,18 @@ Extract text from PDF files inside your self-hosted n8n instance. No API key, no
 
 This is an unverified community node for self-hosted n8n, because it needs PDF.js as a runtime dependency.
 
+### n8n 3
+
+n8n 3 refuses to install unverified community nodes by default. Set this environment variable on your n8n instance and restart it before installing:
+
+```bash
+N8N_UNVERIFIED_PACKAGES_ENABLED=true
+```
+
+Without it, the installation fails with `Package n8n-nodes-free-pdf-to-text is not vetted for installation`.
+
+Set the variable before you upgrade from n8n 2 as well. [n8n's breaking changes](https://docs.n8n.io/changelog/v30-breaking-changes) state that installed unverified nodes stop loading without it.
+
 ## Quick start
 
 1. Add a node that outputs a PDF as binary data, such as **HTTP Request**, **Webhook**, or **Read/Write Files from Disk**.
@@ -127,7 +139,8 @@ Run any document parser that handles untrusted files in an isolated and up-to-da
 
 ## Compatibility
 
-- Self-hosted n8n 2.x. Every change is tested in the current stable n8n release.
+- Self-hosted n8n 2.x and 3.x. CI tests the current stable release and n8n 3.1.0, which is an early access release at the time of writing.
+- n8n 3 requires `N8N_UNVERIFIED_PACKAGES_ENABLED=true`, see [Installation](#n8n-3).
 - Node.js 22.22 or newer.
 - No credentials or external accounts.
 
@@ -139,7 +152,10 @@ pnpm lint
 pnpm test
 ```
 
-`pnpm test` builds the package and also runs the worker-thread tests against the compiled output. `pnpm test:n8n` installs the packed package in a real n8n container and runs a workflow through it, which requires Docker.
+`pnpm test` builds the package and also runs the worker-thread tests against the compiled output. Two more tests use a real n8n container and require Docker:
+
+- `pnpm test:n8n [tag]` runs the packed local package through a workflow.
+- `pnpm test:n8n-install [tag]` installs the version published on npm through n8n itself.
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, and [CHANGELOG.md](./CHANGELOG.md) for release history.
 

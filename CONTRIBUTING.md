@@ -19,6 +19,7 @@ Thank you for considering contributing to this n8n community node! Here are some
 ```bash
 pnpm test      # unit tests, and worker tests against the compiled output
 pnpm test:n8n  # runs the packed package in a real n8n container (requires Docker)
+pnpm test:n8n-install  # installs the published package through n8n (requires Docker)
 ```
 
 To try the node by hand, run `pnpm dev`, which starts a local n8n with the node installed.

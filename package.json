@@ -42,7 +42,8 @@
 		"test": "pnpm build && vitest run",
 		"test:watch": "vitest",
 		"prepublishOnly": "pnpm lint && pnpm test",
-		"test:n8n": "scripts/e2e-n8n.sh"
+		"test:n8n": "scripts/e2e-n8n.sh",
+		"test:n8n-install": "scripts/e2e-n8n-install.sh"
 	},
 	"files": [
 		"dist"

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Document that n8n 3 requires `N8N_UNVERIFIED_PACKAGES_ENABLED=true`.
+- Test in n8n 3 and through n8n's own package installation in CI, also on a weekly schedule.
+
 ## 1.1.0
 
 ### Added

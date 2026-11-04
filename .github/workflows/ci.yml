@@ -4,6 +4,9 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Notices changes in n8n, such as how it treats unverified packages, between code changes.
+  schedule:
+    - cron: '0 6 * * 1'
 
 permissions:
   contents: read
@@ -39,9 +42,14 @@ jobs:
         run: pnpm audit --audit-level high
 
   n8n:
-    name: Real n8n (stable)
+    name: Real n8n (${{ matrix.n8n }})
     runs-on: ubuntu-latest
     needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.1.0 is pinned because n8n 3 is not the stable release yet.
+        n8n: [stable, 3.1.0]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,4 +65,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - run: pnpm test:n8n
+      - name: Run this commit in n8n
+        run: pnpm test:n8n ${{ matrix.n8n }}
+      - name: Install the published package through n8n
+        run: pnpm test:n8n-install ${{ matrix.n8n }}
