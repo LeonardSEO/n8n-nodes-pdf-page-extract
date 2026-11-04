@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-free-pdf-to-text",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"description": "Free local PDF-to-text extraction for n8n — no API key, subscription, or document upload",
 	"keywords": [
 		"n8n-community-node-package",
