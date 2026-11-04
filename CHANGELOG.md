@@ -25,6 +25,7 @@
 
 - Update `pdfjs-dist` to 6.5.438, `@n8n/node-cli` to 0.55.4, and `prettier` to 3.9.10.
 - Only advisories in dependencies that ship to users now block a release. Development tooling advisories are still reported.
+- Publishing runs in separate jobs, so tests and dependency code never hold npm publish or repository write rights.
 - Rewrite the README.
 
 ### Removed
