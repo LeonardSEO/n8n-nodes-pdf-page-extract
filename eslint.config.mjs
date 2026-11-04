@@ -3,7 +3,7 @@ import { configWithoutCloudSupport } from '@n8n/node-cli/eslint';
 export default [
 	...configWithoutCloudSupport,
 	{
-		files: ['nodes/PdfPageExtract/pdf-extraction.ts'],
+		files: ['nodes/FreePdfToText/pdf-*.ts'],
 		rules: {
 			// Helper errors are converted to NodeOperationError at the node boundary.
 			'@n8n/community-nodes/require-node-api-error': 'off',
@@ -14,8 +14,6 @@ export default [
 		rules: {
 			// PDF extraction requires the parser at runtime for self-hosted n8n installations.
 			'@n8n/community-nodes/no-runtime-dependencies': 'off',
-			// The development CLI still requests vulnerable uuid 10.x through LangChain.
-			'@n8n/community-nodes/no-overrides-field': 'off',
 		},
 	},
 ];

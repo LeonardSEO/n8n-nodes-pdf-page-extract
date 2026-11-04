@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-free-pdf-to-text",
-	"version": "1.0.1",
+	"version": "1.1.0",
 	"description": "Free local PDF-to-text extraction for n8n — no API key, subscription, or document upload",
 	"keywords": [
 		"n8n-community-node-package",
@@ -35,13 +35,14 @@
 	"scripts": {
 		"build": "n8n-node build",
 		"dev": "n8n-node dev",
-		"format": "prettier nodes test .github eslint.config.mjs pnpm-workspace.yaml package.json README.md CHANGELOG.md --write",
-		"format:check": "prettier nodes test .github eslint.config.mjs pnpm-workspace.yaml package.json README.md CHANGELOG.md --check",
+		"format": "prettier nodes test scripts .github eslint.config.mjs pnpm-workspace.yaml package.json README.md CHANGELOG.md CONTRIBUTING.md --write",
+		"format:check": "prettier nodes test scripts .github eslint.config.mjs pnpm-workspace.yaml package.json README.md CHANGELOG.md CONTRIBUTING.md --check",
 		"lint": "n8n-node lint",
 		"lint:fix": "n8n-node lint --fix",
-		"test": "vitest run",
+		"test": "pnpm build && vitest run",
 		"test:watch": "vitest",
-		"prepublishOnly": "npm run lint && npm test && npm run build"
+		"prepublishOnly": "pnpm lint && pnpm test",
+		"test:n8n": "scripts/e2e-n8n.sh"
 	},
 	"files": [
 		"dist"
@@ -55,11 +56,11 @@
 		]
 	},
 	"devDependencies": {
-		"@n8n/node-cli": "0.41.2",
+		"@n8n/node-cli": "0.55.4",
 		"@types/node": "22.20.1",
 		"eslint": "9.29.0",
 		"n8n-workflow": "2.31.3",
-		"prettier": "3.9.6",
+		"prettier": "3.9.10",
 		"typescript": "5.9.3",
 		"vitest": "3.2.7"
 	},
@@ -67,16 +68,7 @@
 		"n8n-workflow": "*"
 	},
 	"dependencies": {
-		"pdfjs-dist": "6.2.108"
-	},
-	"overrides": {
-		"brace-expansion@<1.1.18": "1.1.18",
-		"brace-expansion@>=2.0.0 <2.1.4": "2.1.4",
-		"form-data@>=4.0.0 <4.0.6": "4.0.6",
-		"lodash@<=4.17.23": "4.18.1",
-		"minimatch@>=9.0.0 <9.0.7": "9.0.9",
-		"picomatch@<2.3.2": "2.3.2",
-		"uuid": "11.1.1"
+		"pdfjs-dist": "6.5.438"
 	},
 	"publishConfig": {
 		"access": "public",

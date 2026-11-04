@@ -1,0 +1,13 @@
+{
+	"node": "n8n-nodes-free-pdf-to-text.freePdfToText",
+	"nodeVersion": "2.0",
+	"codexVersion": "1.0",
+	"categories": ["Data & Storage", "Utility"],
+	"resources": {
+		"primaryDocumentation": [
+			{
+				"url": "https://github.com/LeonardSEO/n8n-nodes-pdf-page-extract#readme"
+			}
+		]
+	}
+}

@@ -3,11 +3,19 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5
+    ignore:
+      # Handled by .github/workflows/auto-update.yml.
+      - dependency-name: pdfjs-dist
+      - dependency-name: '@n8n/node-cli'
+      - dependency-name: prettier
+      # Major tooling upgrades are done deliberately, not on a schedule.
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     open-pull-requests-limit: 5

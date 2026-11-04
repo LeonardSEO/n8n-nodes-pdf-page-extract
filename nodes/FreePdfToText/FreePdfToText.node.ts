@@ -8,11 +8,74 @@ import {
 	type NodeConnectionType,
 } from 'n8n-workflow';
 
-import { DEFAULT_LIMITS, extractPdf, type PdfExtractionLimits } from './pdf-extraction';
+import {
+	DEFAULT_LIMITS,
+	type PdfExtractionLimits,
+	type PdfExtractionResult,
+} from './pdf-extraction';
+import { DEFAULT_MAX_MEMORY_MB, PdfWorkerClient } from './pdf-worker-client';
 
 function getNumberOption(options: IDataObject, name: string, fallback: number): number {
 	const value = options[name];
 	return typeof value === 'number' ? value : fallback;
+}
+
+function getStringOption(options: IDataObject, name: string): string | undefined {
+	const value = options[name];
+	return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+function toDocumentJson(
+	filename: string,
+	data: PdfExtractionResult,
+	includeRawText: boolean,
+	includeMetadata: boolean,
+): IDataObject {
+	const json: IDataObject = {
+		filename,
+		totalPages: data.totalPages,
+		pages: data.pages,
+		pageNumbers: data.pageNumbers,
+		characterCount: data.characterCount,
+		needsOcr: data.needsOcr,
+		pagesWithoutText: data.pagesWithoutText,
+	};
+
+	if (data.warnings) json.warnings = data.warnings as unknown as IDataObject[];
+	if (includeRawText) json.text = data.text;
+	if (includeMetadata) {
+		json.metadata = (data.metadata ?? null) as IDataObject | null;
+		json.info = (data.info ?? null) as IDataObject | null;
+	}
+
+	return json;
+}
+
+function toPageJson(
+	filename: string,
+	data: PdfExtractionResult,
+	includeMetadata: boolean,
+): IDataObject[] {
+	return data.pages.map((text, index) => {
+		const page = data.pageNumbers[index];
+		const warning = data.warnings?.find((entry) => entry.page === page);
+		const json: IDataObject = {
+			filename,
+			page,
+			totalPages: data.totalPages,
+			text,
+			characterCount: text.length,
+			hasText: text.trim() !== '',
+		};
+
+		if (warning) json.warning = warning.message;
+		if (includeMetadata) {
+			json.metadata = (data.metadata ?? null) as IDataObject | null;
+			json.info = (data.info ?? null) as IDataObject | null;
+		}
+
+		return json;
+	});
 }
 
 function toError(error: unknown): Error {
@@ -25,9 +88,10 @@ export class FreePdfToText implements INodeType {
 		name: 'freePdfToText',
 		icon: { light: 'file:pdf.svg', dark: 'file:pdf.dark.svg' },
 		group: ['transform'],
-		version: 1,
+		version: [1, 2],
+		defaultVersion: 2,
 		usableAsTool: true,
-		subtitle: '={{$parameter["operation"]}}',
+		subtitle: 'Extract text',
 		description: 'Convert PDF files to text locally without a paid API or external upload',
 		defaults: {
 			name: 'Free PDF to Text',
@@ -73,7 +137,8 @@ export class FreePdfToText implements INodeType {
 						operation: ['extractPages'],
 					},
 				},
-				description: 'Whether to include the complete raw text in addition to the pages array',
+				description:
+					'Whether to include the complete raw text in addition to the pages array. Has no effect when Output Mode is One Item per Page.',
 			},
 			{
 				displayName: 'Include Metadata',
@@ -100,6 +165,13 @@ export class FreePdfToText implements INodeType {
 				},
 				options: [
 					{
+						displayName: 'Keep Input Binary',
+						name: 'keepBinary',
+						type: 'boolean',
+						default: true,
+						description: 'Whether to pass the PDF on to the next node',
+					},
+					{
 						displayName: 'Maximum Extracted Characters',
 						name: 'maxExtractedCharacters',
 						type: 'number',
@@ -116,12 +188,55 @@ export class FreePdfToText implements INodeType {
 						description: 'Reject larger PDFs before parsing them',
 					},
 					{
+						displayName: 'Maximum Memory (MB)',
+						name: 'maxMemoryMb',
+						type: 'number',
+						default: DEFAULT_MAX_MEMORY_MB,
+						typeOptions: { minValue: 128, maxValue: 8_192 },
+						description: 'Stop parsing when it needs more memory than this limit',
+					},
+					{
 						displayName: 'Maximum Pages',
 						name: 'maxPages',
 						type: 'number',
 						default: 500,
 						typeOptions: { minValue: 1, maxValue: 2_000 },
-						description: 'Reject PDFs with more pages than this limit',
+						description: 'Reject PDFs when more pages than this limit would be extracted',
+					},
+					{
+						displayName: 'Output Mode',
+						name: 'outputMode',
+						type: 'options',
+						default: 'document',
+						options: [
+							{
+								name: 'One Item per PDF',
+								value: 'document',
+								description: 'Return one item with all pages in a pages array',
+							},
+							{
+								name: 'One Item per Page',
+								value: 'pages',
+								description: 'Return a separate item for every page',
+							},
+						],
+						description: 'How to split the output into items',
+					},
+					{
+						displayName: 'Page Range',
+						name: 'pageRange',
+						type: 'string',
+						default: '',
+						placeholder: '1-3, 5, 8-',
+						description: 'Pages to extract, such as 1-3, 5, 8-. Leave empty for all pages.',
+					},
+					{
+						displayName: 'Password',
+						name: 'password',
+						type: 'string',
+						typeOptions: { password: true },
+						default: '',
+						description: 'Password to open a protected PDF',
 					},
 					{
 						displayName: 'Strict Parsing',
@@ -154,78 +269,93 @@ export class FreePdfToText implements INodeType {
 			throw new NodeOperationError(this.getNode(), `Unsupported operation: ${operation}`);
 		}
 
-		for (let i = 0; i < items.length; i++) {
-			try {
-				const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i) as string;
-				const includeRawText = this.getNodeParameter('includeRawText', i) as boolean;
-				const includeMetadata = this.getNodeParameter('includeMetadata', i) as boolean;
-				const options = this.getNodeParameter('options', i, {}) as IDataObject;
-				const binaryData = items[i].binary;
+		const typeVersion = this.getNode().typeVersion;
+		const client = new PdfWorkerClient();
 
-				if (!binaryData) {
-					throw new NodeOperationError(this.getNode(), 'No binary data exists on this item.', {
-						itemIndex: i,
+		try {
+			for (let i = 0; i < items.length; i++) {
+				try {
+					const binaryPropertyName = this.getNodeParameter('binaryPropertyName', i) as string;
+					const includeRawText = this.getNodeParameter('includeRawText', i) as boolean;
+					const includeMetadata = this.getNodeParameter('includeMetadata', i) as boolean;
+					const options = this.getNodeParameter('options', i, {}) as IDataObject;
+					const binaryData = items[i].binary;
+
+					if (!binaryData) {
+						throw new NodeOperationError(this.getNode(), 'No binary data exists on this item.', {
+							itemIndex: i,
+						});
+					}
+
+					const inputBinary = binaryData[binaryPropertyName];
+					if (!inputBinary) {
+						throw new NodeOperationError(
+							this.getNode(),
+							`Binary data property "${binaryPropertyName}" does not exist on this item.`,
+							{ itemIndex: i },
+						);
+					}
+
+					const limits: PdfExtractionLimits = {
+						maxExtractedCharacters: getNumberOption(
+							options,
+							'maxExtractedCharacters',
+							DEFAULT_LIMITS.maxExtractedCharacters,
+						),
+						maxFileSizeMb: getNumberOption(options, 'maxFileSizeMb', DEFAULT_LIMITS.maxFileSizeMb),
+						maxPages: getNumberOption(options, 'maxPages', DEFAULT_LIMITS.maxPages),
+						strictParsing: options.strictParsing === true,
+						timeoutSeconds: getNumberOption(
+							options,
+							'timeoutSeconds',
+							DEFAULT_LIMITS.timeoutSeconds,
+						),
+					};
+
+					const buffer = await this.helpers.getBinaryDataBuffer(i, binaryPropertyName);
+					const data = await client.extract(buffer, limits, {
+						includeMetadata,
+						maxMemoryMb: getNumberOption(options, 'maxMemoryMb', DEFAULT_MAX_MEMORY_MB),
+						pageRange: getStringOption(options, 'pageRange'),
+						password: getStringOption(options, 'password'),
+						signal: this.getExecutionCancelSignal?.(),
+						textLayout: typeVersion >= 2 ? 'lines' : 'legacy',
 					});
+
+					const filename = inputBinary.fileName || 'document.pdf';
+					const jsonItems =
+						options.outputMode === 'pages'
+							? toPageJson(filename, data, includeMetadata)
+							: [toDocumentJson(filename, data, includeRawText, includeMetadata)];
+					const keepBinary = options.keepBinary !== false;
+
+					for (const json of jsonItems) {
+						returnData.push({
+							json,
+							...(keepBinary ? { binary: binaryData } : {}),
+							pairedItem: { item: i },
+						});
+					}
+				} catch (error) {
+					const nodeError =
+						error instanceof NodeOperationError
+							? error
+							: new NodeOperationError(this.getNode(), toError(error), { itemIndex: i });
+
+					if (this.continueOnFail()) {
+						returnData.push({
+							json: { error: nodeError.message },
+							binary: items[i].binary,
+							pairedItem: { item: i },
+						});
+						continue;
+					}
+
+					throw nodeError;
 				}
-
-				const inputBinary = binaryData[binaryPropertyName];
-				if (!inputBinary) {
-					throw new NodeOperationError(
-						this.getNode(),
-						`Binary data property "${binaryPropertyName}" does not exist on this item.`,
-						{ itemIndex: i },
-					);
-				}
-
-				const limits: PdfExtractionLimits = {
-					maxExtractedCharacters: getNumberOption(
-						options,
-						'maxExtractedCharacters',
-						DEFAULT_LIMITS.maxExtractedCharacters,
-					),
-					maxFileSizeMb: getNumberOption(options, 'maxFileSizeMb', DEFAULT_LIMITS.maxFileSizeMb),
-					maxPages: getNumberOption(options, 'maxPages', DEFAULT_LIMITS.maxPages),
-					strictParsing: options.strictParsing === true,
-					timeoutSeconds: getNumberOption(options, 'timeoutSeconds', DEFAULT_LIMITS.timeoutSeconds),
-				};
-
-				const buffer = await this.helpers.getBinaryDataBuffer(i, binaryPropertyName);
-				const data = await extractPdf(buffer, limits, { includeMetadata });
-				const json: IDataObject = {
-					filename: inputBinary.fileName || 'document.pdf',
-					totalPages: data.totalPages,
-					pages: data.pages,
-				};
-
-				if (data.warnings) json.warnings = data.warnings;
-				if (includeRawText) json.text = data.text;
-				if (includeMetadata) {
-					json.metadata = data.metadata ?? null;
-					json.info = data.info ?? null;
-				}
-
-				returnData.push({
-					json,
-					binary: binaryData,
-					pairedItem: { item: i },
-				});
-			} catch (error) {
-				const nodeError =
-					error instanceof NodeOperationError
-						? error
-						: new NodeOperationError(this.getNode(), toError(error), { itemIndex: i });
-
-				if (this.continueOnFail()) {
-					returnData.push({
-						json: { error: nodeError.message },
-						binary: items[i].binary,
-						pairedItem: { item: i },
-					});
-					continue;
-				}
-
-				throw nodeError;
 			}
+		} finally {
+			await client.close();
 		}
 
 		return [returnData];

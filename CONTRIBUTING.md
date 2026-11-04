@@ -16,22 +16,12 @@ Thank you for considering contributing to this n8n community node! Here are some
 
 ## Testing Your Changes
 
-1. Link the package to your local n8n installation:
-   ```bash
-   pnpm link
-   cd /path/to/n8n
-   npm link n8n-nodes-free-pdf-to-text
-   ```
+```bash
+pnpm test      # unit tests, and worker tests against the compiled output
+pnpm test:n8n  # runs the packed package in a real n8n container (requires Docker)
+```
 
-2. Or use Docker:
-   ```bash
-   docker run -it --rm \
-     --name n8n \
-     -p 5678:5678 \
-     -v ~/.n8n:/home/node/.n8n \
-     -v /path/to/n8n-nodes-free-pdf-to-text:/home/node/.n8n/custom/n8n-nodes-free-pdf-to-text \
-     n8nio/n8n
-   ```
+To try the node by hand, run `pnpm dev`, which starts a local n8n with the node installed.
 
 ## Code Style
 
@@ -52,7 +42,9 @@ pnpm format
 
 ## Release Process
 
-Releases are managed by the maintainers. If you'd like to suggest a release, please open an issue.
+Pushing a `v*.*.*` tag that matches the version in `package.json` runs all checks, publishes to npm with provenance, and creates a GitHub release.
+
+A monthly workflow also updates `pdfjs-dist`, `@n8n/node-cli`, and `prettier`, and releases new `pdfjs-dist` versions automatically. See the README for details.
 
 ## License
 

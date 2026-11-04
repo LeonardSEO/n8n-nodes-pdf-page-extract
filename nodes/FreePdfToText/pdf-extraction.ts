@@ -21,10 +21,20 @@ export interface PdfExtractionLimits {
 	strictParsing: boolean;
 }
 
+export type PdfTextLayout = 'lines' | 'legacy';
+
 export interface PdfExtractionResult {
+	/** Number of pages in the whole document, also when a page range is used. */
 	totalPages: number;
 	pages: string[];
+	/** PDF page number of each entry in `pages`. */
+	pageNumbers: number[];
 	text: string;
+	characterCount: number;
+	/** Selected pages that were read successfully but contain no text. */
+	pagesWithoutText: number[];
+	/** True when no selected page contains text, as with a scan without a text layer. */
+	needsOcr: boolean;
 	warnings?: PdfPageWarning[];
 	metadata?: object;
 	info?: object;
@@ -37,7 +47,10 @@ export interface PdfPageWarning {
 
 export interface PdfExtractionOptions {
 	includeMetadata?: boolean;
+	pageRange?: string;
 	parserFactory?: PdfParserFactory;
+	password?: string;
+	textLayout?: PdfTextLayout;
 }
 
 interface PdfInfoResult {
@@ -54,6 +67,7 @@ export interface PdfLoadOptions {
 	isImageDecoderSupported: boolean;
 	isOffscreenCanvasSupported: boolean;
 	maxImageSize: number;
+	password?: string;
 	stopAtErrors: boolean;
 	useWasm: boolean;
 	useWorkerFetch: boolean;
@@ -89,7 +103,7 @@ export interface PdfJsModule {
 
 export interface PdfParser {
 	getInfo(includeMetadata: boolean): Promise<PdfInfoResult>;
-	getPageText(pageNumber: number): Promise<string>;
+	getPageText(pageNumber: number, layout: PdfTextLayout): Promise<string>;
 	destroy(): Promise<void>;
 }
 
@@ -103,10 +117,49 @@ const loadPdfJsModule: PdfJsModuleLoader = async () => {
 	return pdfJsModulePromise;
 };
 
-function isTextItem(value: unknown): value is { str: string } {
+interface PdfTextItem {
+	str: string;
+	hasEOL?: boolean;
+	height?: number;
+	width?: number;
+}
+
+function isTextItem(value: unknown): value is PdfTextItem {
 	return (
 		typeof value === 'object' && value !== null && 'str' in value && typeof value.str === 'string'
 	);
+}
+
+/** A gap wider than this many font heights separates columns rather than words. */
+const COLUMN_GAP_FONT_HEIGHTS = 2;
+
+function layoutLines(items: PdfTextItem[]): string {
+	let text = '';
+	let fontHeight = 0;
+
+	for (const item of items) {
+		const isSpacer = item.str.trim() === '';
+		if (!isSpacer && item.height) fontHeight = item.height;
+
+		const isColumnGap =
+			isSpacer && fontHeight > 0 && (item.width ?? 0) > fontHeight * COLUMN_GAP_FONT_HEIGHTS;
+		text += isColumnGap ? '\t' : item.str;
+		if (item.hasEOL) text += '\n';
+	}
+
+	return text
+		.split('\n')
+		.map((line) => line.trimEnd())
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+}
+
+function layoutLegacy(items: PdfTextItem[]): string {
+	return items
+		.map((item) => `${item.str} `)
+		.join('')
+		.trim();
 }
 
 class PdfJsParser implements PdfParser {
@@ -149,17 +202,14 @@ class PdfJsParser implements PdfParser {
 		};
 	}
 
-	async getPageText(pageNumber: number): Promise<string> {
+	async getPageText(pageNumber: number, layout: PdfTextLayout): Promise<string> {
 		const document = await this.load();
 		const page = await document.getPage(pageNumber);
 
 		try {
 			const textContent = await page.getTextContent({ disableNormalization: true });
-			let text = '';
-			for (const item of textContent.items) {
-				if (isTextItem(item)) text += `${item.str} `;
-			}
-			return text.trim();
+			const items = textContent.items.filter(isTextItem);
+			return layout === 'legacy' ? layoutLegacy(items) : layoutLines(items);
 		} finally {
 			page.cleanup();
 		}
@@ -189,7 +239,7 @@ function assertPositiveNumber(name: string, value: number, hardLimit: number): v
 	}
 }
 
-function validateLimits(limits: PdfExtractionLimits): void {
+export function validateLimits(limits: PdfExtractionLimits): void {
 	assertPositiveNumber('Maximum file size', limits.maxFileSizeMb, HARD_LIMITS.maxFileSizeMb);
 	assertPositiveNumber('Maximum pages', limits.maxPages, HARD_LIMITS.maxPages);
 	assertPositiveNumber(
@@ -204,9 +254,60 @@ function validateLimits(limits: PdfExtractionLimits): void {
 	}
 }
 
-function hasPdfSignature(buffer: Buffer): boolean {
-	const header = buffer.subarray(0, Math.min(buffer.length, 1_024));
+function hasPdfSignature(data: Uint8Array): boolean {
+	const header = Buffer.from(data.buffer, data.byteOffset, Math.min(data.length, 1_024));
 	return header.indexOf(Buffer.from('%PDF-', 'ascii')) >= 0;
+}
+
+/** Rejects input that can never be parsed, so no parser or worker has to be started for it. */
+export function validatePdfInput(data: Uint8Array, limits: PdfExtractionLimits): void {
+	validateLimits(limits);
+
+	if (data.length === 0) {
+		throw new Error('PDF binary data is empty.');
+	}
+
+	const maximumBytes = limits.maxFileSizeMb * 1_024 * 1_024;
+	if (data.length > maximumBytes) {
+		throw new Error(
+			`PDF file is ${Math.ceil(data.length / 1_024 / 1_024)} MB, exceeding the configured limit of ${limits.maxFileSizeMb} MB.`,
+		);
+	}
+
+	if (!hasPdfSignature(data)) {
+		throw new Error('The binary input is not a valid PDF file (missing %PDF- header).');
+	}
+}
+
+/**
+ * Converts a range such as `1-3, 5, 8-` to sorted page numbers within the document.
+ * An empty range selects every page.
+ */
+export function parsePageRange(range: string, totalPages: number): number[] {
+	if (range.trim() === '') {
+		return Array.from({ length: totalPages }, (_value, index) => index + 1);
+	}
+
+	const selected = new Set<number>();
+	for (const part of range.split(',')) {
+		const match = /^\s*(\d+)\s*(?:(-)\s*(\d+)?)?\s*$/.exec(part);
+		const start = match ? Number(match[1]) : 0;
+		const end = match?.[3] ? Number(match[3]) : match?.[2] ? totalPages : start;
+
+		// An open range starting past the last page selects nothing, it is not reversed.
+		const isOpenRange = Boolean(match?.[2]) && !match?.[3];
+		if (start < 1 || (!isOpenRange && end < start)) {
+			throw new Error(`Invalid page range "${range}". Use a format such as 1-3, 5, 8-.`);
+		}
+
+		for (let page = start; page <= Math.min(end, totalPages); page++) selected.add(page);
+	}
+
+	if (selected.size === 0) {
+		throw new Error(`Page range "${range}" selects no pages. The PDF has ${totalPages} pages.`);
+	}
+
+	return [...selected].sort((a, b) => a - b);
 }
 
 function toObject(value: unknown): object | undefined {
@@ -219,6 +320,22 @@ function toError(error: unknown): Error {
 
 function throwPdfError(error: unknown): never {
 	throw toError(error);
+}
+
+const PDF_JS_INCORRECT_PASSWORD_CODE = 2;
+
+function toFriendlyError(error: unknown): Error {
+	const pdfError = toError(error);
+	if (pdfError.name !== 'PasswordException') return pdfError;
+
+	const isIncorrect =
+		(pdfError as Error & { code?: number }).code === PDF_JS_INCORRECT_PASSWORD_CODE;
+	return new Error(
+		isIncorrect
+			? 'The PDF password is incorrect.'
+			: 'This PDF is password protected. Set the password under Options > Password.',
+		{ cause: pdfError },
+	);
 }
 
 export async function withTimeout<T>(
@@ -245,6 +362,8 @@ async function extractWithParser(
 	parser: PdfParser,
 	limits: PdfExtractionLimits,
 	includeMetadata: boolean,
+	pageRange: string,
+	layout: PdfTextLayout,
 ): Promise<PdfExtractionResult> {
 	const documentInfo = await parser.getInfo(includeMetadata);
 
@@ -252,24 +371,30 @@ async function extractWithParser(
 		throw new Error('The PDF does not contain any readable pages.');
 	}
 
-	if (documentInfo.total > limits.maxPages) {
+	const pageNumbers = parsePageRange(pageRange, documentInfo.total);
+
+	if (pageNumbers.length > limits.maxPages) {
 		throw new Error(
-			`PDF contains ${documentInfo.total} pages, exceeding the configured limit of ${limits.maxPages}.`,
+			`PDF contains ${pageNumbers.length} pages, exceeding the configured limit of ${limits.maxPages}.`,
 		);
 	}
 
 	const pages: string[] = [];
 	const warnings: PdfPageWarning[] = [];
+	const pagesWithoutText: number[] = [];
 	let characterCount = 0;
 
-	for (let pageNumber = 1; pageNumber <= documentInfo.total; pageNumber++) {
+	for (const pageNumber of pageNumbers) {
 		let pageText = '';
+		let readable = true;
 		try {
-			pageText = await parser.getPageText(pageNumber);
+			pageText = await parser.getPageText(pageNumber, layout);
 		} catch (error) {
 			if (limits.strictParsing) throwPdfError(error);
+			readable = false;
 			warnings.push({ page: pageNumber, message: toError(error).message });
 		}
+		if (readable && pageText.trim() === '') pagesWithoutText.push(pageNumber);
 		characterCount += pageText.length;
 
 		if (characterCount > limits.maxExtractedCharacters) {
@@ -284,7 +409,11 @@ async function extractWithParser(
 	return {
 		totalPages: documentInfo.total,
 		pages,
+		pageNumbers,
 		text: pages.join('\n\n'),
+		characterCount,
+		pagesWithoutText,
+		needsOcr: pagesWithoutText.length === pageNumbers.length,
 		warnings: warnings.length > 0 ? warnings : undefined,
 		metadata: toObject(documentInfo.metadata),
 		info: toObject(documentInfo.info),
@@ -292,35 +421,22 @@ async function extractWithParser(
 }
 
 export async function extractPdf(
-	buffer: Buffer,
+	input: Uint8Array,
 	limits: PdfExtractionLimits,
 	options: PdfExtractionOptions = {},
 ): Promise<PdfExtractionResult> {
-	validateLimits(limits);
-
-	if (buffer.length === 0) {
-		throw new Error('PDF binary data is empty.');
-	}
-
-	const maximumBytes = limits.maxFileSizeMb * 1_024 * 1_024;
-	if (buffer.length > maximumBytes) {
-		throw new Error(
-			`PDF file is ${Math.ceil(buffer.length / 1_024 / 1_024)} MB, exceeding the configured limit of ${limits.maxFileSizeMb} MB.`,
-		);
-	}
-
-	if (!hasPdfSignature(buffer)) {
-		throw new Error('The binary input is not a valid PDF file (missing %PDF- header).');
-	}
+	validatePdfInput(input, limits);
 
 	const parser = (options.parserFactory ?? createParser)({
-		data: new Uint8Array(buffer),
+		// PDF.js takes ownership of its input, so a shared Buffer is copied. The worker passes its own.
+		data: Buffer.isBuffer(input) ? new Uint8Array(input) : input,
 		disableFontFace: true,
 		enableXfa: false,
 		isEvalSupported: false,
 		isImageDecoderSupported: false,
 		isOffscreenCanvasSupported: false,
 		maxImageSize: 4_000_000,
+		...(options.password ? { password: options.password } : {}),
 		stopAtErrors: limits.strictParsing,
 		useWasm: false,
 		useWorkerFetch: false,
@@ -333,11 +449,17 @@ export async function extractPdf(
 
 	try {
 		result = await withTimeout(
-			extractWithParser(parser, limits, options.includeMetadata ?? true),
+			extractWithParser(
+				parser,
+				limits,
+				options.includeMetadata ?? true,
+				options.pageRange ?? '',
+				options.textLayout ?? 'lines',
+			),
 			limits.timeoutSeconds * 1_000,
 		);
 	} catch (error) {
-		extractionError = toError(error);
+		extractionError = toFriendlyError(error);
 	}
 
 	try {
